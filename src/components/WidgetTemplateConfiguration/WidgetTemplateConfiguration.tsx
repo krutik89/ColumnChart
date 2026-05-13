@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { UNSPathInput } from '@faclon-labs/design-sdk/UNSPathInput';
 import { WidgetTemplateEnvelope, WidgetTemplateUIConfig } from '../../iosense-sdk/types';
-import { fetchUNSNodes } from '../../iosense-sdk/api';
+import { useUNSTree } from '../../iosense-sdk/useUNSTree';
 import './WidgetTemplateConfiguration.css';
 
 interface WidgetTemplateConfigurationProps {
@@ -9,9 +9,6 @@ interface WidgetTemplateConfigurationProps {
   authentication?: string;
   onChange: (config: WidgetTemplateEnvelope) => void;
 }
-
-// UNS tree type — nested object where null = leaf (selectable node), {} = folder
-type UNSTree = { [key: string]: UNSTree | null };
 
 const VARIABLE_REGEX = /^\{\{(.+)\}\}$/;
 
@@ -62,17 +59,8 @@ export function WidgetTemplateConfiguration({
     config?.uiConfig.style.card.wrapInCard ?? true,
   );
 
-  // ---------------------------------------------------------------------------
-  // UNS tree — shared across all UNSPathInput fields in this configurator.
-  // loadWorkspaces() on first open, loadWorkspaceNodes(name) on folder click.
-  // Pass unsTree + isLoadingTree to every UNSPathInput; pipe onChange through resolveUNSValue().
-  // See .claude/skills/UNSPathInput.md for the full pattern + copy-paste example.
-  // ---------------------------------------------------------------------------
-  const [unsTree, setUnsTree] = useState<UNSTree>({});
-  const [isLoadingTree, setIsLoadingTree] = useState<boolean>(false);
-  const workspaceMapRef = useRef<Record<string, string>>({});
-  const fetchedWsRef = useRef<Set<string>>(new Set());
-  const nodeMetaRef = useRef<Map<string, { wsId: string; nodePath: string }>>(new Map());
+  // UNS tree — see src/iosense-sdk/useUNSTree.ts
+  const { unsTree, isLoadingTree, loadWorkspaces, resolveUNSValue } = useUNSTree(authentication);
 
   // Sync state when an existing config is loaded
   useEffect(() => {
@@ -80,54 +68,6 @@ export function WidgetTemplateConfiguration({
       setWrapInCard(config.uiConfig.style.card.wrapInCard);
     }
   }, [config?._id]);
-
-  async function loadWorkspaces() {
-    if (!authentication || Object.keys(workspaceMapRef.current).length > 0) return;
-    setIsLoadingTree(true);
-    try {
-      const nodes = await fetchUNSNodes(authentication, 'uns:_workspaces');
-      const wsMap: Record<string, string> = {};
-      for (const n of nodes) {
-        if (n.type === 'Workspace' && n.name) wsMap[n.name] = n.id;
-      }
-      workspaceMapRef.current = wsMap;
-      const tree: UNSTree = {};
-      for (const name of Object.keys(wsMap)) tree[name] = {};
-      setUnsTree(tree);
-    } catch (err) {
-      console.error('[UNS] workspace fetch failed:', err);
-    } finally {
-      setIsLoadingTree(false);
-    }
-  }
-
-  async function loadWorkspaceNodes(wsName: string) {
-    const wsId = workspaceMapRef.current[wsName];
-    if (!wsId || !authentication || fetchedWsRef.current.has(wsName)) return;
-    fetchedWsRef.current.add(wsName);
-    try {
-      const nodes = await fetchUNSNodes(authentication, `uns:${wsId}`, 'Operational');
-      const children: UNSTree = {};
-      for (const node of nodes) {
-        if (!node.name) continue;
-        const nodePath = node.path ?? node.name;
-        children[node.name] = null;
-        nodeMetaRef.current.set(`${wsName}/${node.name}`, { wsId, nodePath });
-      }
-      setUnsTree((prev) => ({ ...prev, [wsName]: children }));
-    } catch (err) {
-      console.error(`[UNS] node fetch failed for ${wsName}:`, err);
-      fetchedWsRef.current.delete(wsName);
-    }
-  }
-
-  function resolveUNSValue(rawValue: string): string {
-    if (rawValue.startsWith('{{') && rawValue.endsWith('}}')) {
-      const meta = nodeMetaRef.current.get(rawValue.slice(2, -2));
-      if (meta) return `{{uns:${meta.wsId}://${meta.nodePath}}}`;
-    }
-    return rawValue;
-  }
 
   function emit(overrides?: Partial<{ wrapInCard: boolean }>) {
     const resolved = {
@@ -153,9 +93,23 @@ export function WidgetTemplateConfiguration({
       <div className="wt-config__body">
         {/* TODO: replace these placeholder fields with your widget's actual config UI */}
         {/* Use design-sdk TextInput, Switch, SelectInput, Accordion, Tabs, etc. */}
-        {/* Bindable fields → UNSPathInput (tree={unsTree} isLoading={isLoadingTree} onOpen/onFolderSelect/onChange already wired above) */}
+        {/* Bindable fields → UNSPathInput. See .claude/skills/UNSPathInput.md for copy-paste block. */}
+        {/* Example:
+          <UNSPathInput
+            label="Variable"
+            placeholder="Type / to browse UNS or paste {{topic}} directly"
+            value={myField}
+            tree={unsTree}
+            isLoading={isLoadingTree}
+            onChange={(value: string) => {
+              const resolved = resolveUNSValue(value);
+              setMyField(resolved);
+              emit({ myField: resolved });
+            }}
+            onOpen={() => loadWorkspaces()}
+          />
+        */}
         {/* Static fields → TextInput, Select, Switch, color picker, etc. */}
-        {/* See .claude/skills/UNSPathInput.md for the copy-paste UNSPathInput block */}
 
         <div className="wt-config__field">
           <label className="LabelSmallDefault wt-config__label">Wrap in card</label>
