@@ -1,3 +1,11 @@
+export interface UNSNode {
+  id: string;
+  type: string;
+  name?: string;
+  path: string | null;
+  parentId: string | null;
+}
+
 export interface DataEntry {
   key: string;
   value: string | number | null;

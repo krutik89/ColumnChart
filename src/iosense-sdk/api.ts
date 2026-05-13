@@ -28,3 +28,20 @@ export async function resolveAndCompute(
   const json = await res.json();
   return (json?.data ?? []) as Array<{ key: string; value: string | number | null }>;
 }
+
+export async function fetchUNSNodes(
+  authentication: string,
+  graph: string,
+  label?: string,
+  limit = 100,
+): Promise<Array<{ id: string; type: string; name?: string; path: string | null; parentId: string | null }>> {
+  const params = new URLSearchParams({ graph, limit: String(limit) });
+  if (label) params.set('label', label);
+  const res = await fetch(`${STAGING_BASE}/account/uns/nodes?${params}`, {
+    headers: { Authorization: `Bearer ${authentication}` },
+  });
+  const json = await res.json();
+  return (json?.data?.data ?? []) as Array<{
+    id: string; type: string; name?: string; path: string | null; parentId: string | null;
+  }>;
+}

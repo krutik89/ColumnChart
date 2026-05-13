@@ -8,6 +8,7 @@ Read the four skill files below **before touching any widget code**. They are th
 | `.claude/skills/Bindable.md` | How `{{topic}}` bindings work, `buildDynamicBindingPathList` implementation |
 | `.claude/skills/MiniEngine.md` | `resolve()` data pipeline, `resolveAndCompute` API, DataEntry contract |
 | `.claude/skills/DevHarness.md` | `App.tsx` wiring, auth flow, console logs to expect |
+| `.claude/skills/UNSPathInput.md` | UNS workspace browser, `onFolderSelect` patch, copy-paste UNSPathInput wiring |
 
 ---
 
