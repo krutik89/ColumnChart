@@ -82,14 +82,40 @@ export function useUNSTree(authentication?: string): UseUNSTreeResult {
             if (!_cache.fetchedWs.has(wsName) && authRef.current) {
               _cache.fetchedWs.add(wsName);
               console.log(`[UNS] fetching nodes for workspace: ${wsName} (${wsId})`);
-              fetchUNSNodes(authRef.current, `uns:${wsId}`, 'Operational')
+              fetchUNSNodes(authRef.current, `uns:${wsId}`, 'Operational', 100, true)
                 .then((nodes) => {
-                  const children: UNSTree = {};
+                  // Separate operational nodes (Tag) from virtual properties
+                  const tags: Array<{ name: string; path: string }> = [];
+                  const virtualProps: Array<{ name: string; path: string }> = [];
                   for (const node of nodes) {
                     if (!node.name) continue;
                     const nodePath = node.path ?? node.name;
-                    children[node.name] = null;
-                    _cache.meta.set(`${wsName}/${node.name}`, { wsId, nodePath });
+                    if (node.type === 'virtualProperty') {
+                      virtualProps.push({ name: node.name, path: nodePath });
+                    } else {
+                      tags.push({ name: node.name, path: nodePath });
+                    }
+                  }
+
+                  // Build tree: Tag → folder of virtual property leaves keyed by suffix (:last, :avg…)
+                  // Virtual properties share the same name as their Tag — only path differs.
+                  // Use the colon-suffix from path as the unique display key.
+                  const children: UNSTree = {};
+                  for (const tag of tags) {
+                    const matching = virtualProps.filter(vp => vp.path.startsWith(`${tag.path}:`));
+                    if (matching.length > 0) {
+                      const vpChildren: UNSTree = {};
+                      for (const vp of matching) {
+                        const suffix = vp.path.substring(vp.path.lastIndexOf(':'));  // e.g. ":last"
+                        vpChildren[suffix] = null;
+                        _cache.meta.set(`${wsName}/${tag.name}/${suffix}`, { wsId, nodePath: vp.path });
+                      }
+                      children[tag.name] = vpChildren;
+                    } else {
+                      // No virtual properties — show tag as leaf
+                      children[tag.name] = null;
+                      _cache.meta.set(`${wsName}/${tag.name}`, { wsId, nodePath: tag.path });
+                    }
                   }
                   console.log(`[UNS] ${wsName}: ${nodes.length} nodes loaded`);
                   _cache.nodes[wsName] = children;

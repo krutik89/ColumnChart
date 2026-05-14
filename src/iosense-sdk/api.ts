@@ -34,9 +34,11 @@ export async function fetchUNSNodes(
   graph: string,
   label?: string,
   limit = 100,
+  expandPostfix = false,
 ): Promise<Array<{ id: string; type: string; name?: string; path: string | null; parentId: string | null }>> {
   const params = new URLSearchParams({ graph, limit: String(limit) });
   if (label) params.set('label', label);
+  if (expandPostfix) params.set('expandPostfix', 'true');
   const res = await fetch(`${STAGING_BASE}/account/uns/nodes?${params}`, {
     headers: { Authorization: `Bearer ${authentication}` },
   });
