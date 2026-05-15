@@ -40,7 +40,7 @@ function computeWindow(
     return { startTime: timeConfig.startTime, endTime: timeConfig.endTime };
   }
   const now = Date.now();
-  const dur = timeConfig.allDurations?.find((d) => d.id === timeConfig.defaultDuration);
+  const dur = timeConfig.allDurations?.find((d) => d.id === timeConfig.defaultDurationId);
   if (dur) return { startTime: computePresetStart(dur, now), endTime: now };
   return { startTime: now - 86_400_000, endTime: now };
 }

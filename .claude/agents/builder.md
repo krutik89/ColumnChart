@@ -13,7 +13,7 @@ You are the sole writer of all project source code in this repo.
 Read all four files before making any code change:
 
 1. `Bindable.md` — bindable rendering + flat configurator pattern.
-2. `Envelope 1.md` — `DataPointEnvelope` shape + `dynamicBindingPathList` rules.
+2. `Envelope.md` — `DataPointEnvelope` shape + `dynamicBindingPathList` rules.
 3. `MiniEngine.md` — engine pipeline + `resolveAndCompute`.
 4. `DevHarness.md` — harness wiring, SSO exchange, mount lifecycle.
 

@@ -95,7 +95,7 @@ interface WidgetConfigEnvelope {
   _id: string;
   type: string;                  // Widget type e.g. "DataPoint"
   general: { title: string };
-  timeConfig?: TimeTabUIConfig;  // Optional — time window settings (from TimeConfiguration component)
+  timeConfig?: TimeConfig;       // Optional — time window settings
   uiConfig: UIConfig;            // Render config — widget reads this
   dynamicBindingPathList: Array<{ key: string; topic: string }>; // binding index
 }
@@ -107,64 +107,22 @@ interface WidgetConfigEnvelope {
 
 Used by the mini-engine to compute `startTime`/`endTime` for the `resolveAndCompute` call.
 
-**This object is produced automatically by the `TimeConfiguration` component from `@faclon-labs/design-sdk`.** Never hand-construct it — mount `<TimeConfiguration />` in the configurator and it emits the correct shape via its `onChange` callback.
-
 ```typescript
-export interface GTPPreset {
-  id: string;
-  label: string;
-  x?: number;
-  xPeriod?: 'minute' | 'hour' | 'day' | 'week' | 'month' | 'year';
-  calendarType?: 'today' | 'yesterday' | 'current_week' | 'previous_week' | 'current_month' | 'previous_month';
-  isBuiltIn?: boolean;
-  navigation?: string;
-  xEvent?: string;
-  y?: number;
-  yPeriod?: 'minute' | 'hour' | 'day' | 'week' | 'month' | 'year';
-  yEvent?: string;
-  periodicities?: string[];
-}
-
-export interface GTPShift {
-  id: string;
-  name: string;
-  startTime: string;
-  endTime: string;
-  color: string;
-}
-
-export interface GTPCycleTimeConfig {
-  identifier: 'start' | 'end';
-  hour: string;
-  minute: string;
-  dayOfWeek: number | null;
-  date: string;
-  month: string;
-  year: string;
-}
-
-export type GTPTimeType = 'fixed' | 'local' | 'global';
-
-export interface GTPGlobalTimepicker {
-  id: string;
-  name: string;
-}
-
-// This is the shape stored in envelope.timeConfig
-export interface TimeTabUIConfig {
+interface TimeConfig {
   timezone: string;                    // IANA e.g. "Asia/Kolkata"
-  timeType?: GTPTimeType;
-  globalTimepickerId?: string;
-  defaultDurationId: string;           // ID reference → allDurations[n].id
-  allDurations: GTPPreset[];
-  defaultPeriodicity: 'minute' | 'hourly' | 'daily' | 'weekly' | 'monthly';
-  disablePeriodicities?: boolean;
-  comparisonMode?: boolean;
-  disableTimeSelection?: boolean;
-  futureDaysAllowed?: string;
-  shifts?: GTPShift[];
-  shiftAggregator?: string;
-  cycleTime?: GTPCycleTimeConfig;
+  type: "local" | "fixed" | string;
+  startTime: number | null;            // ms epoch, used when type = "fixed"
+  endTime: number | null;
+  defaultDuration: string;             // ID reference → allDurations[n].id
+  allDurations: Duration[];
+  defaultPeriodicity: "minute" | "hourly" | "daily" | "weekly" | "monthly";
+}
+
+interface Duration {
+  id: string;
+  label?: string;
+  x?: number;
+  xPeriod: string;   // "minute" | "hour" | "day" | "week" | "month" | "year"
 }
 ```
 
@@ -253,7 +211,18 @@ The configurator produces the envelope. It must have:
 2. **Time Settings** → fills `timeConfig` (optional)
 3. **Appearance** → fills `uiConfig` (labels, styling)
 
-> Implementation: see `src/components/WidgetTemplateConfiguration/WidgetTemplateConfiguration.tsx` lines 38–49. Full contract in **Bindable.md §3**.
+```typescript
+function buildEnvelope(existing, variable, sources, style): WidgetConfigEnvelope {
+  const uiConfig = { variable, sources, style };
+  return {
+    _id: existing?._id ?? `dp_${Date.now()}`,
+    type: 'DataPoint',
+    general: existing?.general ?? { title: '' },
+    uiConfig,
+    dynamicBindingPathList: buildDynamicBindingPathList(uiConfig), // scans for {{}} → extracts topics
+  };
+}
+```
 
 `buildDynamicBindingPathList` walks `uiConfig`, finds every field matching `{{...}}`, and produces `{ key: dotPath, topic: contentInsideBraces }`. See Bindable.md for the full implementation.
 ```

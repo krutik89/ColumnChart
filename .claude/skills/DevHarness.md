@@ -26,13 +26,85 @@ It simulates the full DataLayer → Widget flow with real backend calls. No dumm
 
 Visit `http://localhost:3000/?token=<SSO_TOKEN>` once to exchange an SSO token for a JWT. The JWT is stored in `localStorage.bearer_token` and reused across sessions.
 
-> Implementation: see `src/App.tsx` lines 16–32.
+```typescript
+useEffect(() => {
+  const params = new URLSearchParams(window.location.search);
+  const ssoToken = params.get('token');
+  if (ssoToken && !auth) {
+    validateSSOToken(ssoToken).then((jwt) => {
+      if (jwt) {
+        localStorage.setItem('bearer_token', jwt);
+        setAuth(jwt);
+      }
+    });
+  }
+}, []);
+```
 
 ---
 
 ## Full App.tsx Template
 
-> See `src/App.tsx` for the complete working harness. The source also includes `timeOverride` state and a `TIME_CHANGE` event handler.
+```tsx
+import React, { useState, useEffect } from 'react';
+import { DataPoint } from './components/DataPoint/DataPoint';
+import { DataPointConfiguration } from './components/DataPointConfiguration/DataPointConfiguration';
+import { DataEntry, DataPointEnvelope } from './iosense-sdk/types';
+import { validateSSOToken } from './iosense-sdk/api';
+import { resolve } from './iosense-sdk/mini-engine';
+import './App.css';
+
+export default function App() {
+  const [envelope, setEnvelope] = useState<DataPointEnvelope | undefined>(undefined);
+  const [data, setData] = useState<DataEntry[]>([]);
+  const [auth, setAuth] = useState<string>(localStorage.getItem('bearer_token') ?? '');
+
+  // Exchange SSO token from URL query param on first load
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ssoToken = params.get('token');
+    if (ssoToken && !auth) {
+      validateSSOToken(ssoToken).then((jwt) => {
+        if (jwt) {
+          localStorage.setItem('bearer_token', jwt);
+          setAuth(jwt);
+        }
+      });
+    }
+  }, []);
+
+  // Re-resolve whenever envelope or auth changes
+  useEffect(() => {
+    if (!envelope || !auth) return;
+    console.log('[App] resolving envelope:', envelope.dynamicBindingPathList);
+    resolve(envelope, { authentication: auth }).then(({ data: resolved }) => {
+      console.log('[App] resolved data:', resolved);
+      setData(resolved);
+    });
+  }, [envelope, auth]);
+
+  return (
+    <div className="app">
+      <div className="app__config">
+        <DataPointConfiguration envelope={envelope} onChange={setEnvelope} />
+      </div>
+      <div className="app__widget">
+        {envelope ? (
+          <DataPoint
+            config={envelope.uiConfig}
+            data={data}
+            onEvent={(e) => console.log('[Widget Event]', e)}
+          />
+        ) : (
+          <div className="dp-widget dp-widget--empty">
+            <span>Configure the widget to preview it.</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+```
 
 ---
 

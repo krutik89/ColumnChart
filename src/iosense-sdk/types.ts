@@ -23,7 +23,7 @@ export interface TimeConfig {
   type: 'local' | 'fixed' | string;
   startTime: number | null;
   endTime: number | null;
-  defaultDuration: string;
+  defaultDurationId: string;
   allDurations: Duration[];
   defaultPeriodicity: 'minute' | 'hourly' | 'daily' | 'weekly' | 'monthly';
 }

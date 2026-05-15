@@ -75,11 +75,58 @@ Constants (defined in `api.ts`):
 
 ## resolve() Implementation
 
-> See `src/iosense-sdk/mini-engine.ts` lines 9–30.
+```typescript
+import { resolveAndCompute } from './api';
+
+export async function resolve(
+  envelope: DataPointEnvelope,
+  ctx: MiniEngineCtx,
+): Promise<{ config: DataPointUIConfig; data: DataEntry[] }> {
+  const { startTime, endTime } = computeWindow(envelope, ctx.override);
+  const bindings = envelope.dynamicBindingPathList ?? [];
+
+  if (bindings.length === 0) return { config: envelope.uiConfig, data: [] };
+
+  try {
+    const items = await resolveAndCompute(
+      ctx.authentication,
+      bindings.map(({ key, topic }) => ({ key, topic })),
+      startTime,
+      endTime,
+    );
+    const data: DataEntry[] = items.map((item) => ({ key: item.key, value: item.value }));
+    return { config: envelope.uiConfig, data };
+  } catch {
+    return { config: envelope.uiConfig, data: [] };
+  }
+}
+```
 
 ### resolveAndCompute in api.ts
 
-> See `src/iosense-sdk/api.ts` lines 14–30.
+```typescript
+const GRAPH = 'iosense_test_uns';
+const STAGING_BASE = 'https://stagingsv.iosense.io/api';
+
+export async function resolveAndCompute(
+  authentication: string,
+  config: Array<{ key: string; topic: string }>,
+  startTime: number,
+  endTime: number,
+): Promise<Array<{ key: string; value: string | number | null }>> {
+  const res = await fetch(`${STAGING_BASE}/account/uns/resolveAndCompute`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${authentication}`,
+    },
+    body: JSON.stringify({ graph: GRAPH, config, startTime, endTime }),
+  });
+  const json = await res.json();
+  // Response shape: { success, data: [{ key, value }] }
+  return (json?.data ?? []) as Array<{ key: string; value: string | number | null }>;
+}
+```
 
 ---
 
@@ -105,9 +152,23 @@ data = [{ key: "variable", value: "436" }]
 
 ## computeWindow Helper
 
-> See `src/iosense-sdk/mini-engine.ts` lines 32–46.
-
-Priority order: `override` → `fixed` timeConfig → `defaultDuration` preset → default 24 h window.
+```typescript
+function computeWindow(
+  envelope: DataPointEnvelope,
+  override?: { startTime: number; endTime: number },
+): { startTime: number; endTime: number } {
+  if (override) return { startTime: override.startTime, endTime: override.endTime };
+  const { timeConfig } = envelope;
+  if (!timeConfig) return { startTime: Date.now() - 86_400_000, endTime: Date.now() };
+  if (timeConfig.type === 'fixed' && timeConfig.startTime && timeConfig.endTime) {
+    return { startTime: timeConfig.startTime, endTime: timeConfig.endTime };
+  }
+  const now = Date.now();
+  const dur = timeConfig.allDurations?.find(d => d.id === timeConfig.defaultDuration);
+  if (dur) return { startTime: computePresetStart(dur, now), endTime: now };
+  return { startTime: now - 86_400_000, endTime: now };
+}
+```
 
 ---
 

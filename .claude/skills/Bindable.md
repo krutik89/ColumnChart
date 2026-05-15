@@ -85,7 +85,46 @@ const [minTopic, setMinTopic] = useState<string>('');
 
 When the configurator saves, it must walk the `uiConfig` it just built, find every field matching `{{...}}`, extract the topic inside (strip the braces), and write `{ key, topic }` entries into `dynamicBindingPathList`.
 
-> Implementation: see `src/components/WidgetTemplateConfiguration/WidgetTemplateConfiguration.tsx` — `buildDynamicBindingPathList()` (lines 11–36) and `buildEnvelope()` (lines 38–49).
+```typescript
+const VARIABLE_REGEX = /^\{\{(.+)\}\}$/;
+
+function buildDynamicBindingPathList(uiConfig: UIConfig): Array<{ key: string; topic: string }> {
+  const paths: Array<{ key: string; topic: string }> = [];
+
+  function walk(obj: any, currentPath: string): void {
+    if (obj === null || obj === undefined) return;
+    if (typeof obj === 'string') {
+      const match = VARIABLE_REGEX.exec(obj.trim());
+      if (match) paths.push({ key: currentPath, topic: match[1] }); // match[1] = topic without {{ }}
+      return;
+    }
+    if (Array.isArray(obj)) {
+      obj.forEach((item, index) => walk(item, `${currentPath}[${index}]`));
+      return;
+    }
+    if (typeof obj === 'object') {
+      Object.entries(obj).forEach(([key, val]) => {
+        walk(val, currentPath ? `${currentPath}.${key}` : key);
+      });
+    }
+  }
+
+  walk(uiConfig, '');
+  return paths;
+}
+
+// Usage in configurator's save handler
+function buildEnvelope(existing, variable, sources, style): WidgetEnvelope {
+  const uiConfig = { variable, sources, style };
+  return {
+    _id: existing?._id ?? `widget_${Date.now()}`,
+    type: 'WidgetType',
+    general: existing?.general ?? { title: '' },
+    uiConfig,
+    dynamicBindingPathList: buildDynamicBindingPathList(uiConfig),
+  };
+}
+```
 
 ### What the output looks like
 
@@ -141,7 +180,19 @@ data = [
 Widget always reads bindable values via `getValue()` — never directly from `config`:
 
 ```typescript
-// Implementation: see src/components/WidgetTemplate/WidgetTemplate.tsx:17-28
+function getValue(key: string, config: any, data: DataEntry[]): any {
+  const entry = data.find(d => d.key === key);
+  return entry !== undefined ? entry.value : getValueAtPath(config, key);
+}
+
+function getValueAtPath(obj: any, path: string): any {
+  return path
+    .replace(/\[(\d+)\]/g, '.$1')
+    .split('.')
+    .reduce((acc, k) => acc?.[k], obj);
+}
+
+// Usage in widget
 const rawValue = getValue('variable', config, data);   // "436" from data
 const minVal   = getValue('gaugeConfig.min', config, data);
 
@@ -151,7 +202,55 @@ if (data.length === 0) return <WidgetSkeleton config={config} />;
 
 ---
 
-## 6. Checklist Before Submitting Any Configurator
+## 6. Concrete Example — DataPoint Widget Configurator
+
+```tsx
+const VARIABLE_REGEX = /^\{\{(.+)\}\}$/;
+
+function buildDynamicBindingPathList(uiConfig) {
+  const paths = [];
+  function walk(obj, path) {
+    if (typeof obj === 'string') {
+      const match = VARIABLE_REGEX.exec(obj.trim());
+      if (match) paths.push({ key: path, topic: match[1] });
+    } else if (Array.isArray(obj)) {
+      obj.forEach((item, i) => walk(item, `${path}[${i}]`));
+    } else if (obj && typeof obj === 'object') {
+      Object.entries(obj).forEach(([k, v]) => walk(v, path ? `${path}.${k}` : k));
+    }
+  }
+  walk(uiConfig, '');
+  return paths;
+}
+
+const DataPointConfiguration = () => {
+  const [variable, setVariable] = useState<string>('');  // user types {{topic}} here
+
+  function buildEnvelope(): WidgetConfigEnvelope {
+    const uiConfig = { variable, sources, style };
+    return {
+      _id: existing?._id ?? `dp_${Date.now()}`,
+      type: 'DataPoint',
+      general: { title: '' },
+      uiConfig,
+      dynamicBindingPathList: buildDynamicBindingPathList(uiConfig),
+    };
+  }
+
+  return (
+    <TextInput
+      label="Variable"
+      placeholder="e.g. {{iosense/plant1/energy/line1/panelA/DEVICE/analytics/voltage/lastdp}}"
+      value={variable}
+      onChange={({ value }) => { setVariable(value); emit(value, sources, style); }}
+    />
+  );
+};
+```
+
+---
+
+## 7. Checklist Before Submitting Any Configurator
 
 - [ ] Every bindable field is a plain text input — user types `{{iosense/...}}` syntax
 - [ ] Bindable field state is typed as `string`
