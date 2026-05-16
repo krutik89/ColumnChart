@@ -51,20 +51,74 @@ Example: `{{uns:ws_abc123://iosense/plant1/voltage:last}}`
 
 ---
 
-## Step 1 — Import the hook (1 line)
+## Step 1 — Import (already done in template)
+
+The template's `WidgetTemplateConfiguration.tsx` already imports the hook and `UNSTree` type:
 
 ```typescript
 import { useUNSTree } from '../../iosense-sdk/useUNSTree';
+import type { UNSTree } from '../../iosense-sdk/useUNSTree';
 ```
 
 ---
 
-## Step 2 — Call the hook (1 line, replaces ~65 lines of boilerplate)
+## Step 2 — Hook + Angular switching (already done in template — DO NOT add again)
 
-Inside the configurator component, after other `useState` calls:
+> **Critical:** The template already calls `useUNSTree` with Angular injection switching. Do **NOT** add another `useUNSTree()` call. A second call shadows the injection-aware one and breaks Angular production (workspaces will be fetched but never shown).
+
+The template sets up these four variables automatically:
 
 ```typescript
-const { unsTree, isLoadingTree, loadWorkspaces, resolveUNSValue } = useUNSTree(authentication);
+// Already in WidgetTemplateConfiguration.tsx — do not repeat:
+const hasInjectedUNS =
+  props.unsTree !== undefined &&
+  props.onLoadWorkspaces !== undefined &&
+  props.resolveUNSValue !== undefined;
+
+const hookResult = useUNSTree(hasInjectedUNS ? undefined : authentication);
+
+const unsTree         = hasInjectedUNS ? props.unsTree!          : hookResult.unsTree;
+const isLoadingTree   = hasInjectedUNS ? (props.isLoadingTree ?? false) : hookResult.isLoadingTree;
+const loadWorkspaces  = hasInjectedUNS ? props.onLoadWorkspaces! : hookResult.loadWorkspaces;
+const resolveUNSValue = hasInjectedUNS ? props.resolveUNSValue!  : hookResult.resolveUNSValue;
+```
+
+All four variables (`unsTree`, `isLoadingTree`, `loadWorkspaces`, `resolveUNSValue`) are already in scope. Just use them.
+
+---
+
+## How Workspaces Appear in the Dropdown (end-to-end)
+
+```
+1. User types "/" in UNSPathInput
+   → onOpen fires → loadWorkspaces() called
+
+2. loadWorkspaces() makes GET /uns/nodes?graph=uns:_workspaces
+   → populates _cache.workspaces = { "WorkspaceA": "ws_abc123", ... }
+   → calls _notifyAll()
+
+3. _notifyAll() calls setTick(v => v + 1) inside useUNSTree hook
+   → React re-renders the configurator
+
+4. useMemo([tick]) rebuilds the Proxy tree with workspace names as keys
+   → new unsTree object reference passed to UNSPathInput
+
+5. UNSPathInput receives new tree → renders workspace names in dropdown
+```
+
+**Key:** `loadWorkspaces()` is async. Workspaces appear AFTER the fetch completes and React re-renders — not synchronously when `onOpen` fires. The `isLoading={isLoadingTree}` prop shows a spinner during the fetch.
+
+```
+6. User clicks "WorkspaceA" to expand it
+   → UNSPathInput calls tree["WorkspaceA"] (Proxy get trap)
+   → ownKeys() fires on child proxy → fetches nodes via GET /uns/nodes?graph=uns:ws_abc123
+   → nodes populate, _notifyAll() → React re-renders → nodes appear
+
+7. User clicks leaf node e.g. "Sensor1 / :last"
+   → onChange("{{WorkspaceA/Sensor1/:last}}")
+   → resolveUNSValue("{{WorkspaceA/Sensor1/:last}}")
+     → looks up _cache.meta.get("WorkspaceA/Sensor1/:last")
+     → returns "{{uns:ws_abc123://iosense/plant1/sensor1:last}}"
 ```
 
 ---
@@ -206,11 +260,11 @@ async loadWorkspaceNodes(wsName: string, wsId: string, token: string): Promise<v
 
 ## Checklist
 
-- [ ] `import { useUNSTree } from '../../iosense-sdk/useUNSTree'` in configurator
-- [ ] `const { unsTree, isLoadingTree, loadWorkspaces, resolveUNSValue } = useUNSTree(authentication)` inside component
+- [ ] DO NOT add another `useUNSTree()` call — template already has it with injection switching
+- [ ] Use the already-defined `unsTree`, `isLoadingTree`, `loadWorkspaces`, `resolveUNSValue` variables
 - [ ] `tree={unsTree}` and `isLoading={isLoadingTree}` on every UNSPathInput
-- [ ] `onOpen={() => loadWorkspaces()}` on every UNSPathInput
-- [ ] Every `onChange` pipes through `resolveUNSValue(value)` before storing
+- [ ] `onOpen={() => loadWorkspaces()}` on every UNSPathInput — without this, workspaces never load
+- [ ] Every `onChange` pipes through `resolveUNSValue(value)` before storing or emitting
 - [ ] Field state type is `string` (bindable fields are always strings — see Bindable.md)
 - [ ] Field synced from prop in `useEffect([config?._id])`
 - [ ] NO `onFolderSelect` prop — proxy handles it automatically
@@ -218,6 +272,21 @@ async loadWorkspaceNodes(wsName: string, wsId: string, token: string): Promise<v
 - [ ] NO `fetchUNSNodes` import in configurator — only the hook uses it
 - [ ] Angular's `resolveUNSValue` injection returns `{{uns:wsId://path}}` format (not display name format)
 - [ ] Angular's `this.meta` is keyed by workspace NAME, populated when nodes are fetched (not just workspace list)
+
+---
+
+## Troubleshooting: Workspaces Fetched but Not Shown
+
+If the API returns workspaces but UNSPathInput shows an empty dropdown:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| API call succeeds, tree empty | Extra `useUNSTree()` call added | Remove the extra call — use variables already in scope |
+| No API call at all | `onOpen` prop missing | Add `onOpen={() => loadWorkspaces()}` to UNSPathInput |
+| Tree empty after fetch | `tree` prop not passed | Add `tree={unsTree}` to UNSPathInput |
+| Workspaces show, nodes don't | Node fetch not triggered | UNSPathInput must expand a workspace — this fires `ownKeys` trap automatically |
+| Angular: workspaces fetched, not shown | `this.meta` not populated | Call `loadWorkspaceNodes()` for each workspace after `loadWorkspaces()` |
+| Angular: resolve returns display name | `this.meta.get()` returns undefined | Verify meta keys use workspace NAME not ID |
 
 ---
 

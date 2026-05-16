@@ -2,12 +2,20 @@ import { useState, useEffect } from 'react';
 import { UNSPathInput } from '@faclon-labs/design-sdk/UNSPathInput';
 import { WidgetTemplateEnvelope, WidgetTemplateUIConfig } from '../../iosense-sdk/types';
 import { useUNSTree } from '../../iosense-sdk/useUNSTree';
+import type { UNSTree } from '../../iosense-sdk/useUNSTree';
 import './WidgetTemplateConfiguration.css';
 
 interface WidgetTemplateConfigurationProps {
   config: WidgetTemplateEnvelope | undefined;
   authentication?: string;
   onChange: (config: WidgetTemplateEnvelope) => void;
+
+  // Angular injection surface — pass all three functional props or none.
+  // A partial set falls back to the hook to prevent silent topic-resolution mismatches.
+  unsTree?: UNSTree;
+  isLoadingTree?: boolean;
+  onLoadWorkspaces?: () => void;
+  resolveUNSValue?: (rawValue: string) => string;
 }
 
 const VARIABLE_REGEX = /^\{\{(.+)\}\}$/;
@@ -50,17 +58,27 @@ function buildEnvelope(
   };
 }
 
-export function WidgetTemplateConfiguration({
-  config,
-  authentication,
-  onChange,
-}: WidgetTemplateConfigurationProps) {
+export function WidgetTemplateConfiguration(props: WidgetTemplateConfigurationProps) {
+  const { config, authentication, onChange } = props;
+
   const [wrapInCard, setWrapInCard] = useState<boolean>(
     config?.uiConfig.style.card.wrapInCard ?? true,
   );
 
-  // UNS tree — see src/iosense-sdk/useUNSTree.ts
-  const { unsTree, isLoadingTree, loadWorkspaces, resolveUNSValue } = useUNSTree(authentication);
+  // UNS tree — injected by Angular in production; hook used as fallback in dev harness.
+  // All three functional props must be present for injection to be active.
+  const hasInjectedUNS =
+    props.unsTree !== undefined &&
+    props.onLoadWorkspaces !== undefined &&
+    props.resolveUNSValue !== undefined;
+
+  // Hook is always called (Rules of Hooks). Passing undefined auth makes it a no-op.
+  const hookResult = useUNSTree(hasInjectedUNS ? undefined : authentication);
+
+  const unsTree         = hasInjectedUNS ? props.unsTree!          : hookResult.unsTree;
+  const isLoadingTree   = hasInjectedUNS ? (props.isLoadingTree ?? false) : hookResult.isLoadingTree;
+  const loadWorkspaces  = hasInjectedUNS ? props.onLoadWorkspaces! : hookResult.loadWorkspaces;
+  const resolveUNSValue = hasInjectedUNS ? props.resolveUNSValue!  : hookResult.resolveUNSValue;
 
   // Sync state when an existing config is loaded
   useEffect(() => {
