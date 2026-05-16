@@ -6,9 +6,46 @@ export interface UNSNode {
   parentId: string | null;
 }
 
+export interface SeriesSlot {
+  from: number;
+  to: number;
+  label: string;
+  value: number | null;
+  quality: string;
+  isPartial?: boolean;
+}
+
+export interface SeriesAggregation {
+  operator: string;
+  downscale: number;
+  resolution: string;
+}
+
+export interface SeriesMeta {
+  type: string;
+  key: string;
+  unit: string | null;
+  dataPrecision: number | null;
+  aggregation: SeriesAggregation;
+  devID: string;
+  sensor: string;
+}
+
+export interface SeriesPayload {
+  __type: 'series';
+  path: string;
+  meta: SeriesMeta;
+  range: { from: number; to: number };
+  slots: SeriesSlot[];
+}
+
+export interface ScalarBinding { key: string; topic: string; }
+export interface SeriesBinding  { key: string; topic: string; type: 'series'; }
+export type BindingEntry = ScalarBinding | SeriesBinding;
+
 export interface DataEntry {
   key: string;
-  value: string | number | null;
+  value: string | number | null | SeriesPayload;
 }
 
 export interface Duration {
@@ -53,5 +90,5 @@ export interface WidgetTemplateEnvelope {
   general: { title: string };
   timeConfig?: TimeConfig;
   uiConfig: WidgetTemplateUIConfig;
-  dynamicBindingPathList: Array<{ key: string; topic: string }>;
+  dynamicBindingPathList: Array<BindingEntry>;
 }

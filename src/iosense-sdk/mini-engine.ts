@@ -1,4 +1,4 @@
-import { WidgetTemplateEnvelope, WidgetTemplateUIConfig, DataEntry, Duration } from './types';
+import { WidgetTemplateEnvelope, WidgetTemplateUIConfig, DataEntry, SeriesPayload, Duration } from './types';
 import { resolveAndCompute } from './api';
 
 interface MiniEngineCtx {
@@ -36,7 +36,11 @@ export async function resolve(
   try {
     const items = await resolveAndCompute(
       ctx.authentication,
-      validBindings.map(({ key, topic }) => ({ key, topic })),
+      validBindings.map((binding) =>
+        'type' in binding && binding.type === 'series'
+          ? { key: binding.key, topic: binding.topic, type: 'series' as const }
+          : { key: binding.key, topic: binding.topic }
+      ),
       startTime,
       endTime,
     );
@@ -45,6 +49,16 @@ export async function resolve(
   } catch {
     return { config: envelope.uiConfig, data: [] };
   }
+}
+
+export function getSeriesData(key: string, data: DataEntry[]): SeriesPayload | null {
+  const entry = data.find((d) => d.key === key);
+  if (!entry) return null;
+  const v = entry.value;
+  if (v !== null && typeof v === 'object' && (v as SeriesPayload).__type === 'series') {
+    return v as SeriesPayload;
+  }
+  return null;
 }
 
 function computeWindow(

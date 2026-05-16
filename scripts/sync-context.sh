@@ -23,6 +23,7 @@ FILES=(
   "src/iosense-sdk/useUNSTree.ts"
   "src/iosense-sdk/api.ts"
   "src/iosense-sdk/mini-engine.ts"
+  "src/iosense-sdk/types.ts"
   "src/design-sdk-extra.d.ts"
   "scripts/pre-deploy-review.sh"
 )

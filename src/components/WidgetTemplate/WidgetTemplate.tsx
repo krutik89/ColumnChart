@@ -16,7 +16,12 @@ function isConfigured(_config: WidgetTemplateUIConfig): boolean {
 // Read a bindable value: resolved data takes priority, config field is the fallback.
 function getValue(key: string, config: unknown, data: DataEntry[]): string | number | null {
   const entry = data.find((d) => d.key === key);
-  if (entry !== undefined) return entry.value;
+  if (entry !== undefined) {
+    const v = entry.value;
+    // Series payloads are objects — callers must use getSeriesData() for series keys.
+    if (v !== null && typeof v === 'object') return null;
+    return v as string | number | null;
+  }
   return getValueAtPath(config, key) as string | number | null;
 }
 
