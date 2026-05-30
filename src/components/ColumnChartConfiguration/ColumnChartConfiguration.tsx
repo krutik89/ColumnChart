@@ -11,10 +11,13 @@ import type { TimeTabUIConfig } from '@faclon-labs/design-sdk/TimeTabConfigurati
 import { UNSPathInput } from '@faclon-labs/design-sdk/UNSPathInput';
 import { SelectInput } from '@faclon-labs/design-sdk/SelectInput';
 import { DropdownMenu, ActionListItem, ActionListItemGroup } from '@faclon-labs/design-sdk/DropdownMenu';
+import { ColorInput } from '@faclon-labs/design-sdk/ColorPicker';
+import { InputFieldHeader } from '@faclon-labs/design-sdk/InputFieldHeader';
 import { Radio, RadioGroup } from '@faclon-labs/design-sdk/Radio';
 import type { RadioGroupChangeMeta } from '@faclon-labs/design-sdk/Radio';
 import { ListCard, ListCardLeadingItem, ListCardTrailingItem } from '@faclon-labs/design-sdk/ListCard';
-import { Edit2, Trash2, Plus } from 'react-feather';
+import { Tag } from '@faclon-labs/design-sdk/Tag';
+import { Edit2, Trash2, Plus, ArrowLeft, Lock, Unlock } from 'react-feather';
 import {
   ColumnChartEnvelope,
   ColumnChartUIConfig,
@@ -22,7 +25,12 @@ import {
   ColumnChartSeriesConfig,
   FixedSeriesConfig,
   PlotLineConfig,
+  PlotLinePeriodicity,
   PlotBandConfig,
+  AxisConfig,
+  StackConfig,
+  WidgetSizeConfig,
+  WidgetSizePreset,
   TimeConfig,
   Duration,
   BindingEntry,
@@ -35,6 +43,7 @@ interface ColumnChartConfigurationProps {
   config: ColumnChartEnvelope | undefined;
   authentication?: string;
   onChange: (config: ColumnChartEnvelope) => void;
+  onBack?: () => void;
 
   unsTree?: UNSTree;
   isLoadingTree?: boolean;
@@ -43,6 +52,17 @@ interface ColumnChartConfigurationProps {
 }
 
 const VARIABLE_REGEX = /^\{\{(.+)\}\}$/;
+const WIDGET_SIZE_PRESETS: Record<Exclude<WidgetSizePreset, 'Custom'>, { width: number; height: number }> = {
+  Small: { width: 580, height: 400 },
+  Medium: { width: 880, height: 400 },
+  Large: { width: 1780, height: 440 },
+};
+
+function getWidgetSizeDimensions(preset: WidgetSizePreset): { width: number; height: number } {
+  if (preset === 'Custom') return WIDGET_SIZE_PRESETS.Medium;
+  return WIDGET_SIZE_PRESETS[preset];
+}
+
 
 function buildDynamicBindingPathList(
   uiConfig: unknown,
@@ -113,10 +133,23 @@ function buildEnvelope(
 }
 
 type ActiveTab = 'data' | 'time' | 'style';
-type ModalSection = 'series' | 'fixed' | 'plotLine' | 'plotBand';
+type ModalSection = 'series' | 'fixed' | 'plotLine' | 'plotBand' | 'axis' | 'stack';
+
+function makeDefaultChart(): ChartConfig {
+  return {
+    _id: `chart_${Date.now()}`,
+    title: '',
+    series: [],
+    fixedSeries: [],
+    axes: [],
+    stacks: [],
+    plotLines: [],
+    plotBands: [],
+  };
+}
 
 export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
-  const { config, authentication, onChange } = props;
+  const { config, authentication, onChange, onBack } = props;
 
   const hasInjectedUNS =
     props.unsTree !== undefined &&
@@ -136,17 +169,13 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('data');
 
   // ── Charts list + which one is selected in the dropdown ──────────────────
-  const [chartsList,       setChartsList]       = useState<ChartConfig[]>(config?.uiConfig.charts ?? []);
-  const [selectedChartId,  setSelectedChartId]  = useState<string | null>(config?.uiConfig.charts?.[0]?._id ?? null);
+  const initCharts = config?.uiConfig.charts?.length ? config.uiConfig.charts : [makeDefaultChart()];
+  const [chartsList,       setChartsList]       = useState<ChartConfig[]>(initCharts);
+  const [selectedChartId,  setSelectedChartId]  = useState<string | null>(initCharts[0]._id);
   const [chartPickerOpen,  setChartPickerOpen]  = useState(false);
 
   // ── Expanded sections for the selected chart ──────────────────────────────
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
-
-  // ── Per-chart axis / stack dropdown state ─────────────────────────────────
-  const [axisPickerOpen,       setAxisPickerOpen]       = useState(false);
-  const [selectedAxisKey,      setSelectedAxisKey]       = useState<string | null>(null);
-  const [openStackDropdownId,  setOpenStackDropdownId]   = useState<string | null>(null);
 
   // ── Widget-level state ────────────────────────────────────────────────────
   const [currentTimeConfig,    setCurrentTimeConfig]    = useState<TimeConfig | undefined>(config?.timeConfig);
@@ -159,6 +188,17 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
   const [showLegend,     setShowLegend]     = useState(config?.uiConfig.style.showLegend ?? true);
   const [showDataLabels, setShowDataLabels] = useState(config?.uiConfig.style.showDataLabels ?? false);
   const [yAxisUnit,      setYAxisUnit]      = useState(config?.uiConfig.style.yAxisUnit ?? '');
+  const [widgetSizePickerOpen, setWidgetSizePickerOpen] = useState(false);
+  const initialWidgetSize = config?.uiConfig.style.widgetSize ?? {
+    preset: 'Medium' as const,
+    ...getWidgetSizeDimensions('Medium'),
+    locked: false,
+  };
+  const widgetAspectRatioRef = useRef(initialWidgetSize.width / Math.max(initialWidgetSize.height, 1));
+  const [widgetSizePreset, setWidgetSizePreset] = useState<WidgetSizePreset>(initialWidgetSize.preset);
+  const [widgetWidth,     setWidgetWidth]     = useState(String(initialWidgetSize.width));
+  const [widgetHeight,    setWidgetHeight]    = useState(String(initialWidgetSize.height));
+  const [widgetLocked,    setWidgetLocked]    = useState(Boolean(initialWidgetSize.locked));
 
   // ── Modal state ───────────────────────────────────────────────────────────
   const configRef = useRef<HTMLDivElement>(null);
@@ -171,23 +211,39 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
   const [formUnsPath,  setFormUnsPath]  = useState('');
   const [formLabel,    setFormLabel]    = useState('');
   const [formColor,    setFormColor]    = useState('');
-  const [formUnit,     setFormUnit]     = useState('');
+  const [formUnit,      setFormUnit]      = useState('');
+  const [formPrecision, setFormPrecision] = useState('');
   const [formValue,    setFormValue]    = useState('');
   const [formFrom,     setFormFrom]     = useState('');
   const [formTo,       setFormTo]       = useState('');
   const [formWidth,    setFormWidth]    = useState('');
-  const [formDashStyle,           setFormDashStyle]           = useState('');
-  const [formDashStylePickerOpen, setFormDashStylePickerOpen] = useState(false);
+  const [formDashStyle,               setFormDashStyle]               = useState('');
+  const [formDashStylePickerOpen,     setFormDashStylePickerOpen]     = useState(false);
+  const [formAxisName,                setFormAxisName]                = useState('');
+  const [formAxisYAxis,               setFormAxisYAxis]               = useState<0 | 1>(0);
+  const [formAxisSeriesIds,           setFormAxisSeriesIds]           = useState<string[]>([]);
+  const [formAxisSeriesDropdownOpen,   setFormAxisSeriesDropdownOpen]   = useState(false);
+  const [formStackName,               setFormStackName]               = useState('');
+  const [formStackSeriesIds,          setFormStackSeriesIds]          = useState<string[]>([]);
+  const [formStackSeriesDropdownOpen, setFormStackSeriesDropdownOpen] = useState(false);
+  const [formPeriodicityType,         setFormPeriodicityType]         = useState<'independent' | 'dependent'>('independent');
+  const [formPeriodicities,           setFormPeriodicities]           = useState<PlotLinePeriodicity[]>([]);
+  const [formCurrentPeriodicity,      setFormCurrentPeriodicity]      = useState('');
+  const [formPeriodicityDropdownOpen, setFormPeriodicityDropdownOpen] = useState(false);
 
   // Style tab accordion expanded state
   const [styleGeneralExpanded, setStyleGeneralExpanded] = useState(false);
   const [styleChartExpanded,   setStyleChartExpanded]   = useState(false);
 
+  const [showChartValidation, setShowChartValidation] = useState(false);
+  const [addChartError,       setAddChartError]       = useState('');
+
   useEffect(() => {
     if (config) {
-      const charts = config.uiConfig.charts ?? [];
+      const raw = config.uiConfig.charts ?? [];
+      const charts = raw.length > 0 ? raw : [makeDefaultChart()];
       setChartsList(charts);
-      setSelectedChartId(charts[0]?._id ?? null);
+      setSelectedChartId(charts[0]._id);
       setTitle(config.uiConfig.title ?? '');
       setDescription(config.uiConfig.description ?? '');
       setTitleTouched(false);
@@ -196,6 +252,16 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
       setShowLegend(config.uiConfig.style.showLegend);
       setShowDataLabels(config.uiConfig.style.showDataLabels);
       setYAxisUnit(config.uiConfig.style.yAxisUnit ?? '');
+      setWidgetSizePickerOpen(false);
+      const nextWidgetSize = config.uiConfig.style.widgetSize ?? {
+        preset: 'Medium' as const,
+        ...getWidgetSizeDimensions('Medium'),
+        locked: false,
+      };
+      setWidgetSizePreset(nextWidgetSize.preset);
+      setWidgetWidth(String(nextWidgetSize.width));
+      setWidgetHeight(String(nextWidgetSize.height));
+      setWidgetLocked(Boolean(nextWidgetSize.locked));
       setCurrentTimeConfig(config.timeConfig);
       setCurrentTimeTabConfig(config.timeTabConfig);
     }
@@ -212,6 +278,7 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
     showLegend?: boolean;
     showDataLabels?: boolean;
     yAxisUnit?: string;
+    widgetSize?: WidgetSizeConfig;
   }): ColumnChartUIConfig {
     return {
       title:       overrides.title       ?? title,
@@ -223,8 +290,101 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
         showLegend:     overrides.showLegend     ?? showLegend,
         showDataLabels: overrides.showDataLabels ?? showDataLabels,
         yAxisUnit:      overrides.yAxisUnit      ?? yAxisUnit,
+        widgetSize:     overrides.widgetSize     ?? {
+          preset: widgetSizePreset,
+          width: Number(widgetWidth) || getWidgetSizeDimensions(widgetSizePreset).width,
+          height: Number(widgetHeight) || getWidgetSizeDimensions(widgetSizePreset).height,
+          locked: widgetLocked,
+        },
       },
     };
+  }
+
+  function parseWidgetDimension(raw: string, fallback: number) {
+    const value = Number(raw);
+    return Number.isFinite(value) && value > 0 ? Math.round(value) : fallback;
+  }
+
+  function emitWidgetSize(next: WidgetSizeConfig) {
+    emit({ widgetSize: next });
+  }
+
+  function applyWidgetSizePreset(preset: WidgetSizePreset) {
+    setWidgetSizePreset(preset);
+    setWidgetSizePickerOpen(false);
+    if (preset === 'Custom') {
+      const width = parseWidgetDimension(widgetWidth, getWidgetSizeDimensions('Medium').width);
+      const height = parseWidgetDimension(widgetHeight, getWidgetSizeDimensions('Medium').height);
+      widgetAspectRatioRef.current = width / Math.max(height, 1);
+      emitWidgetSize({ preset, width, height, locked: widgetLocked });
+      return;
+    }
+    const dims = getWidgetSizeDimensions(preset);
+    widgetAspectRatioRef.current = dims.width / Math.max(dims.height, 1);
+    setWidgetWidth(String(dims.width));
+    setWidgetHeight(String(dims.height));
+    setWidgetLocked(false);
+    emitWidgetSize({ preset, width: dims.width, height: dims.height, locked: false });
+  }
+
+  function applyWidgetWidth(nextValue: string) {
+    const fallbackWidth = parseWidgetDimension(widgetWidth, getWidgetSizeDimensions(widgetSizePreset === 'Custom' ? 'Medium' : widgetSizePreset).width);
+    const fallbackHeight = parseWidgetDimension(widgetHeight, getWidgetSizeDimensions(widgetSizePreset === 'Custom' ? 'Medium' : widgetSizePreset).height);
+    if (!widgetLocked || widgetSizePreset !== 'Custom') {
+      setWidgetWidth(nextValue);
+      const width = parseWidgetDimension(nextValue, fallbackWidth);
+      if (width > 0 && fallbackHeight > 0) {
+        widgetAspectRatioRef.current = width / fallbackHeight;
+      }
+      emitWidgetSize({
+        preset: widgetSizePreset,
+        width,
+        height: fallbackHeight,
+        locked: widgetLocked,
+      });
+      return;
+    }
+    const nextWidth = parseWidgetDimension(nextValue, fallbackWidth);
+    const ratio = widgetAspectRatioRef.current || (fallbackWidth / Math.max(fallbackHeight, 1));
+    const nextHeight = Math.max(1, Math.round(nextWidth / ratio));
+    setWidgetWidth(nextValue);
+    setWidgetHeight(String(nextHeight));
+    emitWidgetSize({
+      preset: 'Custom',
+      width: nextWidth,
+      height: nextHeight,
+      locked: true,
+    });
+  }
+
+  function applyWidgetHeight(nextValue: string) {
+    const fallbackWidth = parseWidgetDimension(widgetWidth, getWidgetSizeDimensions(widgetSizePreset === 'Custom' ? 'Medium' : widgetSizePreset).width);
+    const fallbackHeight = parseWidgetDimension(widgetHeight, getWidgetSizeDimensions(widgetSizePreset === 'Custom' ? 'Medium' : widgetSizePreset).height);
+    if (!widgetLocked || widgetSizePreset !== 'Custom') {
+      setWidgetHeight(nextValue);
+      const height = parseWidgetDimension(nextValue, fallbackHeight);
+      if (fallbackWidth > 0 && height > 0) {
+        widgetAspectRatioRef.current = fallbackWidth / height;
+      }
+      emitWidgetSize({
+        preset: widgetSizePreset,
+        width: fallbackWidth,
+        height,
+        locked: widgetLocked,
+      });
+      return;
+    }
+    const nextHeight = parseWidgetDimension(nextValue, fallbackHeight);
+    const ratio = widgetAspectRatioRef.current || (fallbackWidth / Math.max(fallbackHeight, 1));
+    const nextWidth = Math.max(1, Math.round(nextHeight * ratio));
+    setWidgetHeight(nextValue);
+    setWidgetWidth(String(nextWidth));
+    emitWidgetSize({
+      preset: 'Custom',
+      width: nextWidth,
+      height: nextHeight,
+      locked: true,
+    });
   }
 
   function emit(
@@ -258,20 +418,31 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
     setSelectedChartId(chartId);
     setChartPickerOpen(false);
     setExpandedSections({});
-    setAxisPickerOpen(false);
-    setSelectedAxisKey(null);
-    setOpenStackDropdownId(null);
   }
 
   // ── Chart CRUD ────────────────────────────────────────────────────────────
 
   function handleAddChart() {
+    if (!title.trim()) {
+      setShowChartValidation(true);
+      setTitleTouched(true);
+      setAddChartError('Chart title is required before adding a new chart.');
+      return;
+    }
+    if (selectedChart && selectedChart.series.length === 0) {
+      setShowChartValidation(true);
+      setAddChartError('At least one series is required before adding a new chart.');
+      return;
+    }
+    setShowChartValidation(false);
+    setAddChartError('');
     const id = `chart_${Date.now()}`;
     const newChart: ChartConfig = {
       _id: id,
       title: '',
       series: [],
       fixedSeries: [],
+      axes: [],
       stacks: [],
       plotLines: [],
       plotBands: [],
@@ -283,11 +454,11 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
   }
 
   function handleDeleteChart(chartId: string) {
-    const next = chartsList.filter((c) => c._id !== chartId);
+    let next = chartsList.filter((c) => c._id !== chartId);
+    if (next.length === 0) next = [makeDefaultChart()];
     setChartsList(next);
     if (selectedChartId === chartId) {
-      const fallback = next[next.length - 1]?._id ?? null;
-      setSelectedChartId(fallback);
+      setSelectedChartId(next[next.length - 1]._id);
       setExpandedSections({});
     }
     emit({ charts: next });
@@ -305,9 +476,12 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
     setModalChartId(chartId);
     setModalSection(section);
     setEditingId(null);
-    setFormUnsPath(''); setFormLabel(''); setFormColor(''); setFormUnit('');
+    setFormUnsPath(''); setFormLabel(''); setFormColor(''); setFormUnit(''); setFormPrecision('');
+    setFormAxisName(''); setFormAxisYAxis(0); setFormAxisSeriesIds([]); setFormAxisSeriesDropdownOpen(false);
+    setFormStackName(''); setFormStackSeriesIds([]); setFormStackSeriesDropdownOpen(false);
     setFormValue(''); setFormFrom(''); setFormTo(''); setFormWidth('');
     setFormDashStyle(''); setFormDashStylePickerOpen(false);
+    setFormPeriodicityType('independent'); setFormPeriodicities([]); setFormCurrentPeriodicity(''); setFormPeriodicityDropdownOpen(false);
     setModalOpen(true);
   }
 
@@ -330,6 +504,8 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
     setFormLabel(item.label);
     setFormColor(item.color ?? '');
     setFormUnit((item as ColumnChartSeriesConfig).unit ?? '');
+    const p = (item as ColumnChartSeriesConfig).precision;
+    setFormPrecision(p !== undefined ? String(p) : '');
     setModalOpen(true);
   }
 
@@ -349,6 +525,10 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
     setFormWidth(item.width !== undefined ? String(item.width) : '');
     setFormDashStyle(item.dashStyle ?? '');
     setFormDashStylePickerOpen(false);
+    setFormPeriodicityType(item.periodicityType ?? 'independent');
+    setFormPeriodicities(item.periodicities ?? []);
+    setFormCurrentPeriodicity('');
+    setFormPeriodicityDropdownOpen(false);
     setModalOpen(true);
   }
 
@@ -369,13 +549,53 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
     setModalOpen(true);
   }
 
+  function openAddAxisModal(chartId: string, e: React.MouseEvent) {
+    openAddModal(chartId, 'axis', e);
+  }
+
+  function openEditAxisModal(chartId: string, e: React.MouseEvent, item: AxisConfig) {
+    e.stopPropagation();
+    if (configRef.current) {
+      const rect = configRef.current.getBoundingClientRect();
+      setModalX(rect.right + 30);
+      setModalY(rect.top);
+    }
+    setModalChartId(chartId);
+    setModalSection('axis');
+    setEditingId(item._id);
+    setFormAxisName(item.name);
+    setFormAxisYAxis(item.yAxis);
+    setFormAxisSeriesIds([...item.seriesIds]);
+    setFormAxisSeriesDropdownOpen(false);
+    setModalOpen(true);
+  }
+
+  function openEditStackModal(chartId: string, e: React.MouseEvent, stack: StackConfig) {
+    e.stopPropagation();
+    if (configRef.current) {
+      const rect = configRef.current.getBoundingClientRect();
+      setModalX(rect.right + 30);
+      setModalY(rect.top);
+    }
+    setModalChartId(chartId);
+    setModalSection('stack');
+    setEditingId(stack._id);
+    setFormStackName(stack.name);
+    setFormStackSeriesIds([...stack.seriesIds]);
+    setFormStackSeriesDropdownOpen(false);
+    setModalOpen(true);
+  }
+
   function handleModalClose() {
     setModalOpen(false);
     setModalChartId(null);
     setEditingId(null);
-    setFormUnsPath(''); setFormLabel(''); setFormColor(''); setFormUnit('');
+    setFormUnsPath(''); setFormLabel(''); setFormColor(''); setFormUnit(''); setFormPrecision('');
+    setFormAxisName(''); setFormAxisYAxis(0); setFormAxisSeriesIds([]); setFormAxisSeriesDropdownOpen(false);
+    setFormStackName(''); setFormStackSeriesIds([]); setFormStackSeriesDropdownOpen(false);
     setFormValue(''); setFormFrom(''); setFormTo(''); setFormWidth('');
     setFormDashStyle(''); setFormDashStylePickerOpen(false);
+    setFormPeriodicityType('independent'); setFormPeriodicities([]); setFormCurrentPeriodicity(''); setFormPeriodicityDropdownOpen(false);
   }
 
   function handleModalSubmit() {
@@ -392,6 +612,7 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
         label: formLabel,
         color: formColor || undefined,
         unit: formUnit || undefined,
+        precision: formPrecision !== '' ? Number(formPrecision) : undefined,
       };
       update = {
         series: editingId
@@ -407,6 +628,8 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
         color: formColor,
         ...(formWidth ? { width: parseFloat(formWidth) } : {}),
         ...(formDashStyle ? { dashStyle: formDashStyle as PlotLineConfig['dashStyle'] } : {}),
+        periodicityType: formPeriodicityType,
+        ...(formPeriodicityType === 'dependent' && formPeriodicities.length > 0 ? { periodicities: formPeriodicities } : {}),
       };
       update = {
         plotLines: editingId
@@ -427,6 +650,36 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
         plotBands: editingId
           ? chart.plotBands.map((p) => p._id === editingId ? entry : p)
           : [...chart.plotBands, entry],
+      };
+    } else if (modalSection === 'stack') {
+      const entry: StackConfig = {
+        _id: editingId ?? `stack_${Date.now()}`,
+        name: formStackName,
+        seriesIds: formStackSeriesIds,
+      };
+      update = {
+        stacks: editingId
+          ? chart.stacks.map((s) => s._id === editingId ? entry : s)
+          : [...chart.stacks, entry],
+      };
+    } else if (modalSection === 'axis') {
+      const entry: AxisConfig = {
+        _id: editingId ?? `axis_${Date.now()}`,
+        name: formAxisName,
+        yAxis: formAxisYAxis,
+        seriesIds: formAxisSeriesIds,
+      };
+      const assignedSeries = new Set(formAxisSeriesIds);
+      update = {
+        axes: editingId
+          ? (chart.axes ?? []).map((axis) => axis._id === editingId ? entry : axis)
+          : [...(chart.axes ?? []), entry],
+        series: chart.series.map((series) => assignedSeries.has(series._id)
+          ? { ...series, yAxis: formAxisYAxis }
+          : series),
+        fixedSeries: chart.fixedSeries.map((series) => assignedSeries.has(series._id)
+          ? { ...series, yAxis: formAxisYAxis }
+          : series),
       };
     } else {
       const entry: ColumnChartSeriesConfig = {
@@ -465,6 +718,16 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
 
   return (
     <div className="cc-config" ref={configRef}>
+      <div className="cc-config__header">
+        <IconButton
+          icon={<ArrowLeft size={20} />}
+          size="20"
+          aria-label="Back"
+          onClick={onBack}
+        />
+        <span className="BodyLargeSemibold cc-config__header-title">Column Chart</span>
+      </div>
+
       <Tabs
         variant="Bordered"
         value={activeTab}
@@ -485,13 +748,17 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
             <div className="cc-config__chart-settings">
               <p className="LabelMediumDefault cc-config__chart-settings-heading">Chart Settings</p>
               <TextInput
-                label="Title"
+                label="Chart title"
                 necessityIndicator="required"
                 placeholder="e.g. Energy Dashboard"
                 value={title}
-                validationState={titleTouched && title.trim() === '' ? 'error' : 'none'}
-                errorText="Title is required"
-                onChange={({ value }) => { setTitle(value); emit({ title: value }); }}
+                validationState={(titleTouched && title.trim() === '') || (showChartValidation && !title.trim()) ? 'error' : 'none'}
+                errorText="Chart title is required"
+                onChange={({ value }) => {
+                  setTitle(value);
+                  emit({ title: value });
+                  if (showChartValidation) { setShowChartValidation(false); setAddChartError(''); }
+                }}
                 onBlur={() => setTitleTouched(true)}
               />
               <TextInput
@@ -511,7 +778,7 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
                     placeholder="Select a chart…"
                     value={
                       selectedChart
-                        ? selectedChart.title || `Chart ${selectedChartIndex + 1}`
+                        ? title || `Chart ${selectedChartIndex + 1}`
                         : ''
                     }
                     isOpen={chartPickerOpen}
@@ -523,7 +790,7 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
                           {chartsList.map((chart, i) => (
                             <ActionListItem
                               key={chart._id}
-                              title={chart.title || `Chart ${i + 1}`}
+                              title={`Chart ${i + 1}`}
                               selectionType="Single"
                               isSelected={selectedChartId === chart._id}
                               onClick={() => selectChart(chart._id)}
@@ -546,21 +813,10 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
             )}
 
             {/* Sections for the selected chart */}
-            {selectedChart && (
-              <>
-                {/* Chart title */}
-                <div className="cc-config__chart-title-field">
-                  <TextInput
-                    label="Chart title"
-                    placeholder="e.g. Energy Consumption"
-                    value={selectedChart.title}
-                    onChange={({ value }) => updateChartInList(selectedChart._id, { title: value })}
-                  />
-                </div>
-
-                {/* Series */}
+            <>
+                {/* Data Source */}
                 <ProductAccordionItem
-                  title="Series"
+                  title="Data Source"
                   isExpanded={isSectionOpen('series')}
                   onToggle={() => toggleSection('series')}
                   headerAction={
@@ -574,7 +830,7 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
                 >
                   <div className="cc-config__section">
                     {selectedChart.series.length === 0 && (
-                      <p className="cc-config__empty-hint BodySmallRegular">No series. Click + to add a data source.</p>
+                      <p className="cc-config__empty-hint BodySmallRegular">No data sources. Click + to add one.</p>
                     )}
                     {selectedChart.series.map((s, i) => (
                       <ListCard
@@ -632,67 +888,60 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
                   title="Axis"
                   isExpanded={isSectionOpen('axis')}
                   onToggle={() => toggleSection('axis')}
+                  headerAction={
+                    <IconButton
+                      icon={<Plus size={14} />}
+                      size="16"
+                      aria-label="Add axis"
+                      onClick={(e) => openAddAxisModal(selectedChart._id, e)}
+                    />
+                  }
                 >
                   <div className="cc-config__section">
-                    {selectedChart.series.length === 0 && selectedChart.fixedSeries.length === 0 ? (
-                      <p className="cc-config__empty-hint BodySmallRegular">Add series first to assign axes.</p>
-                    ) : (() => {
-                      const allItems = [
-                        ...selectedChart.series.map((s, i) => ({ key: `series-${s._id}`, label: s.label || `Series ${i + 1}`, section: 'series' as const, _id: s._id, yAxis: s.yAxis ?? 0 })),
-                        ...selectedChart.fixedSeries.map((s, i) => ({ key: `fixed-${s._id}`, label: s.label || `Fixed ${i + 1}`, section: 'fixed' as const, _id: s._id, yAxis: s.yAxis ?? 0 })),
-                      ];
-                      const selected = allItems.find((it) => it.key === selectedAxisKey);
-                      return (
-                        <>
-                          <SelectInput
-                            label="Select series"
-                            placeholder="Choose a series…"
-                            value={selected?.label ?? ''}
-                            isOpen={axisPickerOpen}
-                            onClick={() => setAxisPickerOpen((v) => !v)}
-                          >
-                            {axisPickerOpen && (
-                              <DropdownMenu>
-                                <ActionListItemGroup>
-                                  {allItems.map((it) => (
-                                    <ActionListItem
-                                      key={it.key}
-                                      title={it.label}
-                                      selectionType="Single"
-                                      isSelected={selectedAxisKey === it.key}
-                                      onClick={() => { setSelectedAxisKey(it.key); setAxisPickerOpen(false); }}
+                    {(selectedChart.axes ?? []).length === 0 ? (
+                      <p className="cc-config__empty-hint BodySmallRegular">No axes. Click + to add.</p>
+                    ) : (
+                      (selectedChart.axes ?? []).map((axis) => {
+                        const axisSeries = [
+                          ...selectedChart.series,
+                          ...selectedChart.fixedSeries,
+                        ].filter((item) => axis.seriesIds.includes(item._id));
+                        const axisLabel = axis.yAxis === 0 ? 'Left Axis' : 'Right Axis';
+                        return (
+                          <ListCard
+                            key={axis._id}
+                            title={axis.name || 'Unnamed Axis'}
+                            subtitle={`${axisLabel}${axisSeries.length > 0 ? ` • ${axisSeries.length} series` : ''}`}
+                            trailingItems={
+                              <>
+                                <ListCardTrailingItem
+                                  trailing="Icon"
+                                  icon={(
+                                    <IconButton
+                                      icon={<Edit2 size={13} />}
+                                      size="16"
+                                      aria-label="Edit"
+                                      onClick={(e) => openEditAxisModal(selectedChart._id, e, axis)}
                                     />
-                                  ))}
-                                </ActionListItemGroup>
-                              </DropdownMenu>
-                            )}
-                          </SelectInput>
-                          {selected && (
-                            <RadioGroup
-                              name="axis-assignment"
-                              label="Axis"
-                              value={String(selected.yAxis)}
-                              orientation="Horizontal"
-                              onChange={({ value }: RadioGroupChangeMeta) => {
-                                const yAxis = Number(value) as 0 | 1;
-                                if (selected.section === 'series') {
-                                  updateChartInList(selectedChart._id, {
-                                    series: selectedChart.series.map((s) => s._id === selected._id ? { ...s, yAxis } : s),
-                                  });
-                                } else {
-                                  updateChartInList(selectedChart._id, {
-                                    fixedSeries: selectedChart.fixedSeries.map((s) => s._id === selected._id ? { ...s, yAxis } : s),
-                                  });
-                                }
-                              }}
-                            >
-                              <Radio label="Left Axis"  value="0" />
-                              <Radio label="Right Axis" value="1" />
-                            </RadioGroup>
-                          )}
-                        </>
-                      );
-                    })()}
+                                  )}
+                                />
+                                <ListCardTrailingItem
+                                  trailing="Icon"
+                                  icon={(
+                                    <IconButton
+                                      icon={<Trash2 size={13} />}
+                                      size="16"
+                                      aria-label="Delete"
+                                      onClick={() => updateChartInList(selectedChart._id, { axes: (selectedChart.axes ?? []).filter((item) => item._id !== axis._id) })}
+                                    />
+                                  )}
+                                />
+                              </>
+                            }
+                          />
+                        );
+                      })
+                    )}
                   </div>
                 </ProductAccordionItem>
 
@@ -706,12 +955,7 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
                       icon={<Plus size={14} />}
                       size="16"
                       aria-label="Add stack"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        updateChartInList(selectedChart._id, {
-                          stacks: [...selectedChart.stacks, { _id: `stack_${Date.now()}`, name: '', seriesIds: [] }],
-                        });
-                      }}
+                      onClick={(e) => openAddModal(selectedChart._id, 'stack', e)}
                     />
                   }
                 >
@@ -719,81 +963,19 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
                     {selectedChart.stacks.length === 0 && (
                       <p className="cc-config__empty-hint BodySmallRegular">No stacks. Click + to add.</p>
                     )}
-                    {selectedChart.stacks.map((stack) => {
-                      const stackItems = [
-                        ...selectedChart.series.map((s, i) => ({ _id: s._id, label: s.label || `Series ${i + 1}` })),
-                        ...selectedChart.fixedSeries.map((s, i) => ({ _id: s._id, label: s.label || `Fixed ${i + 1}` })),
-                      ];
-                      const isDropdownOpen = openStackDropdownId === stack._id;
-                      const selectedTags = stack.seriesIds
-                        .map((id) => stackItems.find((it) => it._id === id))
-                        .filter(Boolean)
-                        .map((it) => ({
-                          label: it!.label,
-                          onDismiss: () => updateChartInList(selectedChart._id, {
-                            stacks: selectedChart.stacks.map((st) =>
-                              st._id === stack._id
-                                ? { ...st, seriesIds: st.seriesIds.filter((id) => id !== it!._id) }
-                                : st
-                            ),
-                          }),
-                        }));
-
-                      return (
-                        <div key={stack._id} className="cc-config__stack-item">
-                          <div className="cc-config__stack-header">
-                            <TextInput
-                              label="Stack name"
-                              placeholder="e.g. Group A"
-                              value={stack.name}
-                              onChange={({ value }) => updateChartInList(selectedChart._id, {
-                                stacks: selectedChart.stacks.map((st) => st._id === stack._id ? { ...st, name: value } : st),
-                              })}
-                            />
-                            <IconButton
-                              icon={<Trash2 size={13} />}
-                              size="16"
-                              aria-label="Delete stack"
-                              onClick={() => updateChartInList(selectedChart._id, {
-                                stacks: selectedChart.stacks.filter((st) => st._id !== stack._id),
-                              })}
-                            />
-                          </div>
-                          <SelectInput
-                            label="Series"
-                            placeholder="Select series to stack…"
-                            tags={selectedTags}
-                            isOpen={isDropdownOpen}
-                            onClick={() => setOpenStackDropdownId(isDropdownOpen ? null : stack._id)}
-                          >
-                            {isDropdownOpen && (
-                              <DropdownMenu>
-                                <ActionListItemGroup>
-                                  {stackItems.map((item) => (
-                                    <ActionListItem
-                                      key={item._id}
-                                      title={item.label}
-                                      selectionType="Multiple"
-                                      isSelected={stack.seriesIds.includes(item._id)}
-                                      onClick={() => {
-                                        const has = stack.seriesIds.includes(item._id);
-                                        updateChartInList(selectedChart._id, {
-                                          stacks: selectedChart.stacks.map((st) =>
-                                            st._id === stack._id
-                                              ? { ...st, seriesIds: has ? st.seriesIds.filter((id) => id !== item._id) : [...st.seriesIds, item._id] }
-                                              : st
-                                          ),
-                                        });
-                                      }}
-                                    />
-                                  ))}
-                                </ActionListItemGroup>
-                              </DropdownMenu>
-                            )}
-                          </SelectInput>
-                        </div>
-                      );
-                    })}
+                    {selectedChart.stacks.map((stack) => (
+                      <ListCard
+                        key={stack._id}
+                        title={stack.name || 'Unnamed Stack'}
+                        subtitle={stack.seriesIds.length > 0 ? `${stack.seriesIds.length} series` : undefined}
+                        trailingItems={
+                          <>
+                            <ListCardTrailingItem trailing="Icon" icon={<IconButton icon={<Edit2 size={13} />} size="16" aria-label="Edit" onClick={(e) => openEditStackModal(selectedChart._id, e, stack)} />} />
+                            <ListCardTrailingItem trailing="Icon" icon={<IconButton icon={<Trash2 size={13} />} size="16" aria-label="Delete" onClick={() => updateChartInList(selectedChart._id, { stacks: selectedChart.stacks.filter((st) => st._id !== stack._id) })} />} />
+                          </>
+                        }
+                      />
+                    ))}
                   </div>
                 </ProductAccordionItem>
 
@@ -860,8 +1042,7 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
                     ))}
                   </div>
                 </ProductAccordionItem>
-              </>
-            )}
+            </>
           </>
         )}
 
@@ -878,6 +1059,81 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
         {/* ── Style Tab ── */}
         {activeTab === 'style' && (
           <>
+            <div className="cc-config__style-top">
+              <SelectInput
+                label="Widget Size"
+                placeholder="Select size…"
+                value={
+                  widgetSizePreset === 'Custom'
+                    ? 'Custom'
+                    : widgetSizePreset === 'Medium'
+                    ? `Medium ${getWidgetSizeDimensions('Medium').width}x${getWidgetSizeDimensions('Medium').height}`
+                    : widgetSizePreset
+                }
+                isOpen={widgetSizePickerOpen}
+                onClick={() => setWidgetSizePickerOpen((v) => !v)}
+              >
+                {widgetSizePickerOpen && (
+                  <DropdownMenu>
+                    <ActionListItemGroup>
+                      {(['Small', 'Medium', 'Large', 'Custom'] as const).map((preset) => {
+                        const dims = preset === 'Medium' ? getWidgetSizeDimensions(preset) : null;
+                        return (
+                          <ActionListItem
+                            key={preset}
+                            title={preset === 'Medium' ? `${preset} ${dims.width}x${dims.height}` : preset}
+                            selectionType="Single"
+                            isSelected={widgetSizePreset === preset}
+                            onClick={() => applyWidgetSizePreset(preset)}
+                          />
+                        );
+                      })}
+                    </ActionListItemGroup>
+                  </DropdownMenu>
+                )}
+              </SelectInput>
+              {widgetSizePreset === 'Custom' && (
+                <div className="cc-style__widget-size-row">
+                  <TextInput
+                    label=""
+                    accessibilityLabel="Widget width"
+                    prefix="W"
+                    type="number"
+                    placeholder="580"
+                    value={widgetWidth}
+                    onChange={({ value }) => applyWidgetWidth(value)}
+                  />
+                  <TextInput
+                    label=""
+                    accessibilityLabel="Widget height"
+                    prefix="H"
+                    type="number"
+                    placeholder="400"
+                    value={widgetHeight}
+                    onChange={({ value }) => applyWidgetHeight(value)}
+                  />
+                  <IconButton
+                    icon={widgetLocked ? <Lock size={14} /> : <Unlock size={14} />}
+                    size="16"
+                    aria-label={widgetLocked ? 'Unlock widget size' : 'Lock widget size'}
+                    onClick={() => {
+                      const nextLocked = !widgetLocked;
+                      const currentWidth = parseWidgetDimension(widgetWidth, getWidgetSizeDimensions('Medium').width);
+                      const currentHeight = parseWidgetDimension(widgetHeight, getWidgetSizeDimensions('Medium').height);
+                      widgetAspectRatioRef.current = currentWidth / Math.max(currentHeight, 1);
+                      setWidgetLocked(nextLocked);
+                      emitWidgetSize({
+                        preset: 'Custom',
+                        width: currentWidth,
+                        height: currentHeight,
+                        locked: nextLocked,
+                      });
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+
             <ProductAccordionItem
               title="General"
               isExpanded={styleGeneralExpanded}
@@ -929,6 +1185,9 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
       {/* ── Bottom footer: Add Chart (Data tab only) ── */}
       {activeTab === 'data' && (
         <div className="cc-config__footer">
+          {addChartError && (
+            <p className="cc-config__add-chart-error BodySmallRegular">{addChartError}</p>
+          )}
           <Button variant="Primary" label="Add Chart" onClick={handleAddChart} />
         </div>
       )}
@@ -946,26 +1205,56 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
             title={
               modalSection === 'plotLine'  ? (editingId ? 'Edit Plot Line'    : 'Add Plot Line')
             : modalSection === 'plotBand'  ? (editingId ? 'Edit Plot Band'    : 'Add Plot Band')
+            : modalSection === 'axis'      ? (editingId ? 'Edit Axis'         : 'Add Axis')
             : modalSection === 'fixed'     ? (editingId ? 'Edit Fixed Series' : 'Add Fixed Series')
-            :                               (editingId ? 'Edit Series'        : 'Add Series')
+            : modalSection === 'stack'     ? (editingId ? 'Edit Stack'        : 'Add Stack')
+            :                               (editingId ? 'Edit Data Source'   : 'Add Data Source')
             }
             onClose={handleModalClose}
           />
         }
         footer={
-          <ModalFooter
-            primaryAction={
-              <Button variant="Primary" label={editingId ? 'Save' : 'Add'} onClick={handleModalSubmit} />
-            }
-          />
+          <ModalFooter>
+            <Button
+              variant="Primary"
+              label={
+                editingId ? 'Save'
+                : modalSection === 'plotBand' ? 'Add Plot Band'
+                : modalSection === 'plotLine' ? 'Add Plot Line'
+                : modalSection === 'axis'     ? 'Add Axis'
+                : modalSection === 'stack'    ? 'Add Stack'
+                : 'Add'
+              }
+              isFullWidth
+              isDisabled={
+                (modalSection === 'series' || modalSection === 'fixed')
+                  ? !formLabel.trim() || !formUnsPath.trim() || !formColor.trim()
+                  : modalSection === 'plotBand'
+                  ? !formLabel.trim() || !formColor.trim() || !formFrom.trim() || !formTo.trim()
+                  : modalSection === 'axis'
+                  ? !formAxisName.trim() || formAxisSeriesIds.length === 0
+                  : modalSection === 'stack'
+                  ? !formStackName.trim() || formStackSeriesIds.length === 0
+                  : false
+              }
+              onClick={handleModalSubmit}
+            />
+          </ModalFooter>
         }
       >
         <ModalBody>
           <div className="cc-series-modal__body">
             {(modalSection === 'series' || modalSection === 'fixed') && (
               <>
+                <TextInput
+                  label="Label"
+                  necessityIndicator="required"
+                  placeholder={modalSection === 'fixed' ? 'e.g. Target' : 'e.g. Power Consumption'}
+                  value={formLabel}
+                  onChange={({ value }) => setFormLabel(value)}
+                />
                 <UNSPathInput
-                  label="Data source"
+                  label="UNS Path"
                   placeholder="Type / to browse UNS or paste {{topic}}"
                   value={formUnsPath}
                   tree={unsTree}
@@ -973,48 +1262,253 @@ export function ColumnChartConfiguration(props: ColumnChartConfigurationProps) {
                   onChange={(v: string) => setFormUnsPath(resolveUNSValue(v))}
                   onOpen={() => loadWorkspaces()}
                 />
-                <TextInput
-                  label="Label"
-                  placeholder={modalSection === 'fixed' ? 'e.g. Target' : 'e.g. Power Consumption'}
-                  value={formLabel}
-                  onChange={({ value }) => setFormLabel(value)}
-                />
                 {modalSection === 'series' && (
-                  <TextInput label="Unit" placeholder="e.g. kWh" value={formUnit} onChange={({ value }) => setFormUnit(value)} />
+                  <div className="cc-series-modal__two-col">
+                    <TextInput label="Unit" placeholder="e.g. kWh" value={formUnit} onChange={({ value }) => setFormUnit(value)} />
+                    <TextInput label="Precision" type="number" placeholder="e.g. 2" value={formPrecision} onChange={({ value }) => setFormPrecision(value)} />
+                  </div>
                 )}
-                <TextInput label="Color" placeholder="e.g. #4A90E2" value={formColor} onChange={({ value }) => setFormColor(value)} />
+                <div>
+                  <InputFieldHeader label="Color" necessityIndicator="required" />
+                  <ColorInput value={formColor} onChange={(v) => setFormColor(v)} />
+                </div>
               </>
             )}
             {modalSection === 'plotLine' && (
               <>
+                {/* 1. Identity */}
+                <TextInput label="Label" necessityIndicator="required" isRequired placeholder="e.g. Target" value={formLabel} onChange={({ value }) => setFormLabel(value)} />
+                {/* 2. Data */}
                 <UNSPathInput label="Value" placeholder="Type a number or / to bind" value={formValue} tree={unsTree} isLoading={isLoadingTree} onChange={(v: string) => setFormValue(resolveUNSValue(v))} onOpen={() => loadWorkspaces()} />
-                <TextInput label="Label" placeholder="e.g. Target" value={formLabel} onChange={({ value }) => setFormLabel(value)} />
-                <TextInput label="Color" placeholder="e.g. #ef4444" value={formColor} onChange={({ value }) => setFormColor(value)} />
-                <TextInput label="Width" type="number" placeholder="e.g. 2" value={formWidth} onChange={({ value }) => setFormWidth(value)} />
-                <SelectInput label="Dash style" placeholder="Solid" value={formDashStyle || 'Solid'} isOpen={formDashStylePickerOpen} onClick={() => setFormDashStylePickerOpen((v) => !v)}>
-                  {formDashStylePickerOpen && (
-                    <DropdownMenu>
-                      <ActionListItemGroup>
-                        {(['Solid', 'Dash', 'Dot', 'DashDot', 'LongDash', 'ShortDash'] as const).map((ds) => (
-                          <ActionListItem key={ds} title={ds} selectionType="Single"
-                            isSelected={formDashStyle === ds || (!formDashStyle && ds === 'Solid')}
-                            onClick={() => { setFormDashStyle(ds); setFormDashStylePickerOpen(false); }}
+                {/* 3. Color */}
+                <div>
+                  <InputFieldHeader label="Color" necessityIndicator="required" />
+                  <ColorInput value={formColor} onChange={(v) => setFormColor(v)} />
+                </div>
+                {/* 4. Line style */}
+                <div className="cc-series-modal__two-col">
+                  <TextInput label="Width" type="number" placeholder="e.g. 2" value={formWidth} onChange={({ value }) => setFormWidth(value)} />
+                  <SelectInput label="Dash style" placeholder="Solid" value={formDashStyle || 'Solid'} isOpen={formDashStylePickerOpen} onClick={() => setFormDashStylePickerOpen((v) => !v)}>
+                    {formDashStylePickerOpen && (
+                      <DropdownMenu>
+                        <ActionListItemGroup>
+                          {(['Solid', 'Dash', 'Dot', 'DashDot', 'LongDash', 'ShortDash'] as const).map((ds) => (
+                            <ActionListItem key={ds} title={ds} selectionType="Single"
+                              isSelected={formDashStyle === ds || (!formDashStyle && ds === 'Solid')}
+                              onClick={() => { setFormDashStyle(ds); setFormDashStylePickerOpen(false); }}
+                            />
+                          ))}
+                        </ActionListItemGroup>
+                      </DropdownMenu>
+                    )}
+                  </SelectInput>
+                </div>
+                {/* 5. Periodicity behavior */}
+                <RadioGroup
+                  name="periodicity-type"
+                  label="Periodicity"
+                  value={formPeriodicityType}
+                  orientation="Horizontal"
+                  onChange={({ value }: RadioGroupChangeMeta) => {
+                    setFormPeriodicityType(value as 'independent' | 'dependent');
+                    if (value === 'independent') { setFormPeriodicities([]); setFormCurrentPeriodicity(''); setFormPeriodicityDropdownOpen(false); }
+                  }}
+                >
+                  <Radio label="Independent" value="independent" />
+                  <Radio label="Dependent"   value="dependent" />
+                </RadioGroup>
+                {formPeriodicityType === 'dependent' && (
+                  <>
+                    <div className="cc-periodicity-row">
+                      <div className="cc-periodicity-row__select">
+                        <SelectInput
+                          label="Add periodicity"
+                          placeholder="Select…"
+                          value={formCurrentPeriodicity ? formCurrentPeriodicity.charAt(0).toUpperCase() + formCurrentPeriodicity.slice(1) : ''}
+                          isOpen={formPeriodicityDropdownOpen}
+                          onClick={() => setFormPeriodicityDropdownOpen((v) => !v)}
+                        >
+                          {formPeriodicityDropdownOpen && (
+                            <DropdownMenu>
+                              <ActionListItemGroup>
+                                {(['hourly', 'daily', 'weekly', 'monthly'] as const)
+                                  .filter((p) => !formPeriodicities.includes(p))
+                                  .map((p) => (
+                                    <ActionListItem
+                                      key={p}
+                                      title={p.charAt(0).toUpperCase() + p.slice(1)}
+                                      selectionType="Single"
+                                      isSelected={formCurrentPeriodicity === p}
+                                      onClick={() => { setFormCurrentPeriodicity(p); setFormPeriodicityDropdownOpen(false); }}
+                                    />
+                                  ))}
+                              </ActionListItemGroup>
+                            </DropdownMenu>
+                          )}
+                        </SelectInput>
+                      </div>
+                      <Button
+                        variant="Secondary"
+                        label="Add"
+                        isDisabled={!formCurrentPeriodicity}
+                        onClick={() => {
+                          if (formCurrentPeriodicity) {
+                            setFormPeriodicities([...formPeriodicities, formCurrentPeriodicity as PlotLinePeriodicity]);
+                            setFormCurrentPeriodicity('');
+                          }
+                        }}
+                      />
+                    </div>
+                    {formPeriodicities.length > 0 && (
+                      <div className="cc-periodicity-tags">
+                        {formPeriodicities.map((p) => (
+                          <Tag
+                            key={p}
+                            label={p.charAt(0).toUpperCase() + p.slice(1)}
+                            onDismiss={() => setFormPeriodicities(formPeriodicities.filter((x) => x !== p))}
                           />
                         ))}
-                      </ActionListItemGroup>
-                    </DropdownMenu>
-                  )}
-                </SelectInput>
+                      </div>
+                    )}
+                  </>
+                )}
               </>
             )}
             {modalSection === 'plotBand' && (
               <>
-                <UNSPathInput label="From" placeholder="Type a number or / to bind" value={formFrom} tree={unsTree} isLoading={isLoadingTree} onChange={(v: string) => setFormFrom(resolveUNSValue(v))} onOpen={() => loadWorkspaces()} />
-                <UNSPathInput label="To"   placeholder="Type a number or / to bind" value={formTo}   tree={unsTree} isLoading={isLoadingTree} onChange={(v: string) => setFormTo(resolveUNSValue(v))}   onOpen={() => loadWorkspaces()} />
-                <TextInput label="Label" placeholder="e.g. Overload Zone" value={formLabel} onChange={({ value }) => setFormLabel(value)} />
-                <TextInput label="Color" placeholder="e.g. rgba(239,68,68,0.15)" value={formColor} onChange={({ value }) => setFormColor(value)} />
+                <TextInput label="Name" necessityIndicator="required" isRequired placeholder="e.g. Overload Zone" value={formLabel} onChange={({ value }) => setFormLabel(value)} />
+                <div>
+                  <InputFieldHeader label="Color" necessityIndicator="required" />
+                  <ColorInput value={formColor} onChange={(v) => setFormColor(v)} />
+                </div>
+                <div className="cc-series-modal__two-col">
+                  <UNSPathInput label="Start value" necessityIndicator="required" isRequired placeholder="Start value" value={formFrom} tree={unsTree} isLoading={isLoadingTree} onChange={(v: string) => setFormFrom(resolveUNSValue(v))} onOpen={() => loadWorkspaces()} />
+                  <UNSPathInput label="End value"   necessityIndicator="required" isRequired placeholder="End value"   value={formTo}   tree={unsTree} isLoading={isLoadingTree} onChange={(v: string) => setFormTo(resolveUNSValue(v))}   onOpen={() => loadWorkspaces()} />
+                </div>
               </>
             )}
+            {modalSection === 'axis' && (() => {
+              const modalChart = chartsList.find((c) => c._id === modalChartId);
+              const axisItems = modalChart ? [
+                ...modalChart.series.map((s, i) => ({ _id: s._id, label: s.label || `Series ${i + 1}` })),
+                ...modalChart.fixedSeries.map((s, i) => ({ _id: s._id, label: s.label || `Fixed ${i + 1}` })),
+              ] : [];
+              return (
+                <>
+                  <TextInput
+                    label="Name"
+                    necessityIndicator="required"
+                    isRequired
+                    placeholder="e.g. Temperature"
+                    value={formAxisName}
+                    onChange={({ value }) => setFormAxisName(value)}
+                  />
+                  <RadioGroup
+                    name="axis-side"
+                    label="Axis side"
+                    value={String(formAxisYAxis)}
+                    orientation="Horizontal"
+                    onChange={({ value }: RadioGroupChangeMeta) => {
+                      setFormAxisYAxis(Number(value) as 0 | 1);
+                    }}
+                  >
+                    <Radio label="Left Axis" value="0" />
+                    <Radio label="Right Axis" value="1" />
+                  </RadioGroup>
+                  <SelectInput
+                    label="Series"
+                    necessityIndicator="required"
+                    placeholder="Select series for this axis…"
+                    tags={formAxisSeriesIds.map((id) => {
+                      const item = axisItems.find((it) => it._id === id);
+                      return {
+                        label: item?.label ?? id,
+                        onDismiss: () => setFormAxisSeriesIds(formAxisSeriesIds.filter((x) => x !== id)),
+                      };
+                    })}
+                    isOpen={formAxisSeriesDropdownOpen}
+                    onClick={() => setFormAxisSeriesDropdownOpen((v) => !v)}
+                  >
+                    {formAxisSeriesDropdownOpen && (
+                      <DropdownMenu>
+                        <ActionListItemGroup>
+                          {axisItems.map((item) => (
+                            <ActionListItem
+                              key={item._id}
+                              title={item.label}
+                              selectionType="Multiple"
+                              isSelected={formAxisSeriesIds.includes(item._id)}
+                              onClick={() => {
+                                const has = formAxisSeriesIds.includes(item._id);
+                                setFormAxisSeriesIds(has
+                                  ? formAxisSeriesIds.filter((x) => x !== item._id)
+                                  : [...formAxisSeriesIds, item._id]
+                                );
+                              }}
+                            />
+                          ))}
+                        </ActionListItemGroup>
+                      </DropdownMenu>
+                    )}
+                  </SelectInput>
+                </>
+              );
+            })()}
+            {modalSection === 'stack' && (() => {
+              const modalChart = chartsList.find((c) => c._id === modalChartId);
+              const stackItems = modalChart ? [
+                ...modalChart.series.map((s, i) => ({ _id: s._id, label: s.label || `Series ${i + 1}` })),
+                ...modalChart.fixedSeries.map((s, i) => ({ _id: s._id, label: s.label || `Fixed ${i + 1}` })),
+              ] : [];
+              return (
+                <>
+                  <TextInput
+                    label="Stack name"
+                    necessityIndicator="required"
+                    isRequired
+                    placeholder="e.g. Group A"
+                    value={formStackName}
+                    onChange={({ value }) => setFormStackName(value)}
+                  />
+                  <SelectInput
+                    label="Series"
+                    necessityIndicator="required"
+                    placeholder="Select series to stack…"
+                    tags={formStackSeriesIds.map((id) => {
+                      const item = stackItems.find((it) => it._id === id);
+                      return {
+                        label: item?.label ?? id,
+                        onDismiss: () => setFormStackSeriesIds(formStackSeriesIds.filter((x) => x !== id)),
+                      };
+                    })}
+                    isOpen={formStackSeriesDropdownOpen}
+                    onClick={() => setFormStackSeriesDropdownOpen((v) => !v)}
+                  >
+                    {formStackSeriesDropdownOpen && (
+                      <DropdownMenu>
+                        <ActionListItemGroup>
+                          {stackItems.map((item) => (
+                            <ActionListItem
+                              key={item._id}
+                              title={item.label}
+                              selectionType="Multiple"
+                              isSelected={formStackSeriesIds.includes(item._id)}
+                              onClick={() => {
+                                const has = formStackSeriesIds.includes(item._id);
+                                setFormStackSeriesIds(has
+                                  ? formStackSeriesIds.filter((x) => x !== item._id)
+                                  : [...formStackSeriesIds, item._id]
+                                );
+                              }}
+                            />
+                          ))}
+                        </ActionListItemGroup>
+                      </DropdownMenu>
+                    )}
+                  </SelectInput>
+                </>
+              );
+            })()}
           </div>
         </ModalBody>
       </Modal>
