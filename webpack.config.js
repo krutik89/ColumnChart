@@ -38,6 +38,11 @@ export default (env, argv) => {
     module: {
       rules: [
         {
+          test: /\.m?js$/,
+          include: /node_modules/,
+          resolve: { fullySpecified: false },
+        },
+        {
           test: /\.(ts|tsx)$/,
           exclude: /node_modules/,
           use: {
